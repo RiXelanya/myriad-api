@@ -20,11 +20,16 @@ export class SocialMediaService {
   ) {}
 
   async fetchTweet(textId: string): Promise<ExtendedPost> {
-    let data = null;
+    let response = null;
+    const expansions =
+      'author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id';
+    const tweetFields = 'attachments,entities,created_at';
+    const mediaFields = 'url,variants';
+    const userFields = 'profile_image_url';
 
     try {
-      data = await this.twitterService.getActions(
-        `1.1/statuses/show.json?id=${textId}&include_entities=true&tweet_mode=extended`,
+      response = await this.twitterService.getActions(
+        `2/tweets/${textId}?expansions=${expansions}&tweet.fields=${tweetFields}&media.fields=${mediaFields}&user.fields=${userFields}`,
       );
     } catch (err) {
       switch (err.statusCode) {
@@ -39,16 +44,48 @@ export class SocialMediaService {
       }
     }
 
+    const {data, includes} = response;
     const {
-      id_str: idStr,
-      full_text: fullText,
+      id: idStr,
+      text: fullText,
       created_at: createdAt,
-      user,
+      author_id: author,
+      referenced_tweets: references,
       entities,
-      extended_entities: extendedEntities,
-      quoted_status: quotedStatus,
-      display_text_range: [startWith],
+      attachments,
     } = data;
+    /* eslint-disable  @typescript-eslint/no-explicit-any */
+    const users: any[] = includes.users;
+    /* eslint-disable  @typescript-eslint/no-explicit-any */
+    let user: any;
+    users.forEach(element => {
+      if (element.id === author) {
+        user = element;
+      }
+    });
+    /* eslint-disable  @typescript-eslint/no-explicit-any */
+    let quotedStatus: any;
+    if (typeof references !== 'undefined') {
+      /* eslint-disable  @typescript-eslint/no-explicit-any */
+      const reference: any[] = references;
+      // let user = users.filter(user => (user.id === author))[0];
+      const quote: any[] = reference.filter(
+        referenced => referenced.type === 'quoted',
+      );
+
+      /* eslint-disable  @typescript-eslint/no-explicit-any */
+      const tweets: any[] = includes.tweets;
+      if (quote.length > 0) {
+        quotedStatus = tweets.filter(tweet => tweet.id === quote[0].id)[0];
+        quotedStatus.user = users.filter(
+          quoter => quoter.id === quotedStatus.author_id,
+        )[0];
+      } else {
+        quotedStatus = null;
+      }
+    } else {
+      quotedStatus = null;
+    }
 
     const asset: Omit<Asset, 'exclusiveContents'> = {
       images: [],
@@ -58,21 +95,21 @@ export class SocialMediaService {
     const twitterTags = entities
       ? entities.hashtags
         ? entities.hashtags.map((hashtag: AnyObject) =>
-            hashtag.text.toLowerCase(),
+            hashtag.tag.toLowerCase(),
           )
         : []
       : [];
 
-    let text: String = fullText.substring(startWith);
-    if (extendedEntities) {
-      const medias = extendedEntities.media;
+    let text: String = fullText;
+    if (attachments) {
+      const medias = includes.media;
       const images: Sizes[] = [];
 
       for (const media of medias) {
         text = text.replace(media.url, '');
 
         if (media.type === 'photo') {
-          const imageURL = media.media_url_https;
+          const imageURL = media.url;
 
           images.push({
             original: imageURL,
@@ -82,11 +119,11 @@ export class SocialMediaService {
             large: `${imageURL}?name=large`,
           });
         } else {
-          const videoInfo = media.video_info.variants;
+          const variants: any[] = media.variants;
 
-          for (const video of videoInfo) {
-            if (video.content_type === 'video/mp4') {
-              asset.videos.push(video.url.split('?tag=12')[0]);
+          for (const variant of variants) {
+            if (variant.content_type === 'video/mp4') {
+              asset.videos.push(variant.url.split('?tag=12')[0]);
               break;
             }
           }
@@ -95,26 +132,27 @@ export class SocialMediaService {
 
       if (images.length > 0) asset.images = images;
     }
+    if (typeof entities?.url !== 'undefined') {
+      for (const entity of entities?.urls as AnyObject[]) {
+        const url = entity.url;
+        const expandedURL = entity.expanded_url;
 
-    for (const entity of entities.urls as AnyObject[]) {
-      const url = entity.url;
-      const expandedURL = entity.expanded_url;
-
-      text = text.replace(url, expandedURL);
+        text = text.replace(url, expandedURL);
+      }
     }
 
     let embedded = null;
-    let embeddedURL = entities?.urls[entities.urls.length - 1]?.expanded_url;
+    let embeddedURL = entities?.urls
+      ? entities?.urls[entities.urls.length - 1]?.expanded_url
+      : null;
 
     if (embeddedURL && asset.images.length === 0 && asset.videos.length === 0) {
       try {
         if (!validateURL(embeddedURL)) throw new Error('InvalidURL');
         if (quotedStatus) {
-          const [embeddeStartWith] = quotedStatus?.display_text_range ?? 0;
           const quoteEntities = quotedStatus?.entities?.urls ?? [];
 
-          let description =
-            quotedStatus?.full_text?.substring(embeddeStartWith) ?? '';
+          let description = quotedStatus?.text ?? '';
 
           quoteEntities.forEach((entity: AnyObject) => {
             description = description.replace(
@@ -127,12 +165,12 @@ export class SocialMediaService {
             'https://res.cloudinary.com/dsget80gs/background/profile-default-bg.png';
 
           embeddedURL =
-            quotedStatus?.user?.screen_name && quotedStatus?.id_str
-              ? `https://twitter.com/${quotedStatus.user.screen_name}/status/${quotedStatus.id_str}`
+            quotedStatus?.user?.username && quotedStatus?.id
+              ? `https://twitter.com/${quotedStatus.user?.username}/status/${quotedStatus.id}`
               : '';
 
           embedded = new EmbeddedURL({
-            title: quotedStatus?.user?.name ?? '',
+            title: quotedStatus?.user?.username ?? '',
             description: description,
             siteName: 'Twitter',
             url: embeddedURL,
@@ -161,12 +199,12 @@ export class SocialMediaService {
       originCreatedAt: new Date(createdAt).toString(),
       asset: asset,
       embeddedURL: embedded,
-      url: `https://twitter.com/${user.id_str}/status/${textId}`,
+      url: `https://twitter.com/${user.id}/status/${textId}`,
       platformUser: {
         name: user.name,
-        username: user.screen_name,
-        originUserId: user.id_str,
-        profilePictureURL: user.profile_image_url_https || '',
+        username: user.username,
+        originUserId: user.id,
+        profilePictureURL: user.profile_image_url || '',
         platform: PlatformType.TWITTER,
       },
     } as ExtendedPost;
