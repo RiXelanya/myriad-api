@@ -36,6 +36,7 @@ import {Wallet, WalletWithRelations} from './wallet.model';
         },
         options: {
           unique: true,
+          sparse: true,
         },
       },
       nameIndex: {
