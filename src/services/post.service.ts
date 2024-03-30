@@ -396,7 +396,7 @@ export class PostService {
 
       try {
         if (!validateURL(url)) throw new Error('InvalidURL');
-        embeddedURL = await getOpenGraph(url);
+        // embeddedURL = await getOpenGraph(url);
       } catch {
         // ignore
       }
