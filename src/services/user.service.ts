@@ -51,7 +51,6 @@ import {
   UnlockableContentWithPrice,
   UpdateTransactionDto,
   UpdateUserDto,
-  UpdateUserPersonalAccessTokenDto,
   User,
   UserCurrency,
   UserExperience,
